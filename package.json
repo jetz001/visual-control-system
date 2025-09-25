@@ -1,0 +1,144 @@
+{
+  "name": "visual-control-system",
+  "version": "1.0.0",
+  "description": "ระบบตรวจสอบตำแหน่งและการเอียงของกล่องด้วย Computer Vision สำหรับเครื่องพิมพ์ Flexo",
+  "main": "index.html",
+  "type": "module",
+  "scripts": {
+    "start": "live-server --port=3000 --open=index.html --ignore=node_modules",
+    "dev": "live-server --port=3000 --open=index.html --ignore=node_modules --watch=css,js",
+    "build": "npm run minify-css && npm run minify-js",
+    "minify-css": "csso css/style.css --output dist/style.min.css && csso css/components.css --output dist/components.min.css && csso css/responsive.css --output dist/responsive.min.css",
+    "minify-js": "uglifyjs js/main.js js/camera.js js/detection.js js/audio.js js/bluetooth.js js/utils.js --compress --mangle --output dist/app.min.js",
+    "lint": "eslint js/**/*.js --fix",
+    "format": "prettier --write \"**/*.{js,css,html,json,md}\"",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean": "rimraf dist",
+    "serve": "http-server -p 3000 -o",
+    "deploy": "npm run build && npm run deploy-gh-pages",
+    "deploy-gh-pages": "gh-pages -d .",
+    "watch": "concurrently \"npm run watch-css\" \"npm run watch-js\"",
+    "watch-css": "chokidar \"css/**/*.css\" -c \"echo CSS changed\"",
+    "watch-js": "chokidar \"js/**/*.js\" -c \"echo JS changed\""
+  },
+  "keywords": [
+    "computer-vision",
+    "quality-control",
+    "manufacturing",
+    "flexo-printing",
+    "real-time-monitoring",
+    "machine-vision",
+    "javascript",
+    "web-app",
+    "industrial-automation",
+    "opencv"
+  ],
+  "author": {
+    "name": "Visual Control Team",
+    "email": "developer@example.com",
+    "url": "https://github.com/yourname/visual-control-system"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourname/visual-control-system.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourname/visual-control-system/issues"
+  },
+  "homepage": "https://yourname.github.io/visual-control-system",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "browserslist": [
+    "last 2 versions",
+    "not dead",
+    "> 1%",
+    "Chrome >= 80",
+    "Firefox >= 75",
+    "Safari >= 13",
+    "Edge >= 80"
+  ],
+  "dependencies": {
+    "opencv.js": "^4.8.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "chokidar-cli": "^3.0.0",
+    "concurrently": "^8.2.0",
+    "csso-cli": "^4.0.2",
+    "eslint": "^8.57.0",
+    "gh-pages": "^6.0.0",
+    "globals": "^13.20.0",
+    "http-server": "^14.1.0",
+    "live-server": "^1.2.2",
+    "prettier": "^3.0.0",
+    "rimraf": "^5.0.0",
+    "uglify-js": "^3.17.0"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.32.0"
+  },
+  "peerDependencies": {
+    "live-server": ">=1.2.0"
+  },
+  "config": {
+    "port": 3000,
+    "host": "localhost"
+  },
+  "eslintConfig": {
+    "env": {
+      "browser": true,
+      "es2022": true
+    },
+    "extends": [
+      "eslint:recommended"
+    ],
+    "parserOptions": {
+      "ecmaVersion": "latest",
+      "sourceType": "module"
+    },
+    "globals": {
+      "cv": "readonly"
+    },
+    "rules": {
+      "no-unused-vars": "warn",
+      "no-console": "off",
+      "prefer-const": "error",
+      "no-var": "error"
+    }
+  },
+  "prettier": {
+    "semi": true,
+    "trailingComma": "es5",
+    "singleQuote": true,
+    "printWidth": 100,
+    "tabWidth": 4,
+    "useTabs": false
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "setupFilesAfterEnv": ["<rootDir>/tests/setup.js"],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "npm run lint && npm run format",
+      "pre-push": "npm run test"
+    }
+  },
+  "files": [
+    "index.html",
+    "css/",
+    "js/",
+    "lib/",
+    "assets/",
+    "config/",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ]
+}

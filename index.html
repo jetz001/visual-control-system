@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Control System - ตรวจสอบตำแหน่งกล่อง</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="./assets/icons/favicon.ico">
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="./css/style.css">
+    <link rel="stylesheet" href="./css/components.css">
+    <link rel="stylesheet" href="./css/responsive.css">
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="./js/main.js" as="script" crossorigin="anonymous">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-spinner"></div>
+        <p>กำลังโหลดระบบ Visual Control...</p>
+    </div>
+
+    <div class="container">
+        <!-- Header Section -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🎯 Visual Control System</h1>
+                <p>ระบบตรวจสอบตำแหน่งและการเอียงของกล่อง</p>
+                <div class="version-info">v1.0.0</div>
+            </div>
+        </header>
+
+        <!-- Status Bar -->
+        <section class="status-bar">
+            <div id="cameraStatus" class="status-item status-disconnected">
+                <span class="status-icon">📹</span>
+                <span class="status-text">กล้อง: ไม่เชื่อมต่อ</span>
+            </div>
+            <div id="bluetoothStatus" class="status-item status-disconnected">
+                <span class="status-icon">🔊</span>
+                <span class="status-text">ลำโพง: ไม่เชื่อมต่อ</span>
+            </div>
+            <div id="monitoringStatus" class="status-item status-disconnected">
+                <span class="status-icon">👁️</span>
+                <span class="status-text">สถานะ: หยุดตรวจสอบ</span>
+            </div>
+        </section>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Video Section -->
+            <section class="video-section">
+                <div class="section-header">
+                    <h3>📹 ภาพจากกล้อง</h3>
+                    <div class="video-controls-header">
+                        <button id="fullscreenBtn" class="btn btn-sm btn-secondary" title="เต็มจอ">
+                            📺
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="video-container" id="videoContainer">
+                    <video id="videoElement" autoplay muted playsinline></video>
+                    <canvas id="overlayCanvas" class="reference-overlay"></canvas>
+                    
+                    <!-- Video Info Overlay -->
+                    <div class="video-info">
+                        <span id="videoResolution">-</span>
+                        <span id="frameRate">- FPS</span>
+                    </div>
+                </div>
+                
+                <div class="video-controls">
+                    <button id="startCamera" class="btn btn-primary">
+                        🎥 เปิดกล้อง
+                    </button>
+                    <button id="takeReference" class="btn btn-success" disabled>
+                        📸 ถ่ายรูปอ้างอิง
+                    </button>
+                    <button id="clearReference" class="btn btn-warning" disabled>
+                        🗑️ ลบรูปอ้างอิง
+                    </button>
+                    <button id="saveReference" class="btn btn-info" disabled>
+                        💾 บันทึกภาพอ้างอิง
+                    </button>
+                </div>
+            </section>
+
+            <!-- Controls Section -->
+            <section class="controls-section">
+                <!-- Connection Controls -->
+                <div class="control-group">
+                    <h3>🔊 การเชื่อมต่อเสียง</h3>
+                    <div class="bluetooth-section">
+                        <button id="connectBluetooth" class="btn btn-primary">
+                            🔗 เชื่อมต่อลำโพง
+                        </button>
+                        <button id="disconnectBluetooth" class="btn btn-danger" disabled>
+                            🔌 เลิกเชื่อมต่อ
+                        </button>
+                        <button id="testSound" class="btn btn-warning" disabled>
+                            🔊 ทดสอบเสียง
+                        </button>
+                        <div id="bluetoothInfo" class="connection-info hidden">
+                            <span class="connection-status">✅ เชื่อมต่อลำโพงสำเร็จ</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sensitivity Settings -->
+                <div class="control-group">
+                    <h3>⚙️ การตั้งค่าความไว</h3>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label for="rotationSensitivity">ความเอียง (องศา)</label>
+                            <div class="slider-container">
+                                <input type="range" id="rotationSensitivity" class="slider" 
+                                       min="1" max="15" value="5" step="1">
+                                <span class="slider-value" id="rotationValue">5°</span>
+                            </div>
+                        </div>
+                        
+                        <div class="setting-item">
+                            <label for="positionSensitivity">การเลื่อนตำแหน่ง (พิกเซล)</label>
+                            <div class="slider-container">
+                                <input type="range" id="positionSensitivity" class="slider" 
+                                       min="5" max="100" value="20" step="5">
+                                <span class="slider-value" id="positionValue">20px</span>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <label for="detectionThreshold">เกณฑ์การตรวจจับ (%)</label>
+                            <div class="slider-container">
+                                <input type="range" id="detectionThreshold" class="slider" 
+                                       min="10" max="90" value="50" step="10">
+                                <span class="slider-value" id="thresholdValue">50%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Monitoring Controls -->
+                <div class="control-group">
+                    <h3>🎛️ การควบคุมระบบ</h3>
+                    <div class="monitoring-controls">
+                        <button id="startMonitoring" class="btn btn-success btn-large" disabled>
+                            ▶️ เริ่มตรวจสอบ
+                        </button>
+                        <button id="stopMonitoring" class="btn btn-danger btn-large" disabled>
+                            ⏹️ หยุดตรวจสอบ
+                        </button>
+                        <button id="pauseAlert" class="btn btn-warning" disabled>
+                            🔇 หยุดเตือน 30 วิ
+                        </button>
+                        <button id="resetStats" class="btn btn-secondary">
+                            🔄 รีเซ็ตสถิติ
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Statistics Section -->
+        <section class="statistics-section">
+            <h3>📊 ข้อมูลการตรวจสอบ</h3>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📦</div>
+                    <div class="stat-content">
+                        <div id="totalBoxes" class="stat-number">0</div>
+                        <div class="stat-label">กล่องทั้งหมด</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card stat-success">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-content">
+                        <div id="normalBoxes" class="stat-number">0</div>
+                        <div class="stat-label">ตำแหน่งถูกต้อง</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card stat-danger">
+                    <div class="stat-icon">⚠️</div>
+                    <div class="stat-content">
+                        <div id="alertBoxes" class="stat-number">0</div>
+                        <div class="stat-label">ผิดปกติ</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card stat-info">
+                    <div class="stat-icon">🎯</div>
+                    <div class="stat-content">
+                        <div id="accuracy" class="stat-number">100%</div>
+                        <div class="stat-label">ความแม่นยำ</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Alert Section -->
+        <section class="alert-section">
+            <div id="systemAlert" class="alert-box alert-info">
+                <span class="alert-icon">ℹ️</span>
+                <span class="alert-message">ระบบพร้อมใช้งาน - เริ่มต้นด้วยการเปิดกล้อง</span>
+            </div>
+        </section>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="./js/main.js"></script>
+    
+    <!-- Service Worker for PWA (optional) -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(registration => console.log('SW registered'))
+                    .catch(error => console.log('SW registration failed'));
+            });
+        }
+    </script>
+    <!-- Emergency loading screen hide -->
+    <script>
+        // Force hide loading screen after 5 seconds if still visible
+        setTimeout(() => {
+            const loadingScreen = document.getElementById('loading-screen');
+            if (loadingScreen && !loadingScreen.classList.contains('hidden')) {
+                console.warn('⚠️ Emergency: Forcing loading screen to hide');
+                loadingScreen.style.display = 'none';
+            }
+        }, 5000);
+    </script>
+</body>
+</html>
