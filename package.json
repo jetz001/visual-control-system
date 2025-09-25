@@ -60,9 +60,7 @@
     "Safari >= 13",
     "Edge >= 80"
   ],
-  "dependencies": {
-    "opencv.js": "^4.8.0"
-  },
+  
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "chokidar-cli": "^3.0.0",
