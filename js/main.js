@@ -437,27 +437,25 @@ class VisualControlApp {
     /**
      * Handle save reference
      */
-    handleSaveReference() {
-        try {
-            let referenceData = null;
-            
-            // Get reference data from detection engine (with null check)
-            if (this.detection && typeof this.detection.getReferenceData === 'function') {
-                referenceData = this.detection.getReferenceData();
-            }
-            
-            if (referenceData) {
-                // Save to localStorage
-                localStorage.setItem('visualControl_reference', JSON.stringify(referenceData));
-                this.showAlert('บันทึกภาพอ้างอิงลง Local Storage สำเร็จ', 'success');
-            } else {
-                this.showAlert('ไม่มีภาพอ้างอิงให้บันทึก', 'warning');
-            }
-        } catch (error) {
-            console.error('❌ Error saving reference:', error);
-            this.showAlert('ไม่สามารถบันทึกภาพอ้างอิงได้', 'danger');
-        }
-    }
+    handleSaveReference(imageData) {
+  try {
+    // ❌ อย่าเก็บ imageData เป็น base64 ยาว ๆ ใน localStorage
+    // localStorage.setItem('visualControl_reference', imageData);
+
+    // ✅ เก็บเฉพาะ timestamp หรือ path แทน
+    const ref = {
+      timestamp: Date.now(),
+      note: "reference saved",
+      // เก็บแค่ url blob หรือ id ของ IndexedDB
+    };
+    localStorage.setItem('visualControl_reference', JSON.stringify(ref));
+
+    this.showAlert("บันทึกอ้างอิงสำเร็จ", "success");
+  } catch (err) {
+    console.error("❌ Error saving reference:", err);
+    this.showAlert("ไม่สามารถบันทึกภาพอ้างอิงได้", "error");
+  }
+}
 
     /**
      * Handle connect bluetooth
@@ -1020,6 +1018,72 @@ class VisualControlApp {
         this.state.isMonitoring = false;
     }
 }
+
+let cameraSelectEl, refreshCamerasBtn;
+try {
+    const cameras = await visualControlApp.camera.getAvailableCameras();
+    cameraSelectEl.innerHTML = '';
+    if (!cameras.length) {
+        cameraSelectEl.innerHTML = `<option value="">ไม่พบกล้อง</option>`;
+        return;
+    }
+    for (const d of cameras) {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Camera (${d.deviceId.slice(0, 6)}…)`;
+        cameraSelectEl.appendChild(opt);
+    }
+    if (savedId && [...cameraSelectEl.options].some(o => o.value === savedId)) {
+        cameraSelectEl.value = savedId;
+    }
+} catch (err) {
+    console.error('โหลดรายชื่อกล้องล้มเหลว:', err);
+    cameraSelectEl.innerHTML = `<option value="">โหลดรายชื่อกล้องล้มเหลว</option>`;
+}
+
+
+cameraSelectEl.addEventListener('change', async (e) => {
+const chosenId = e.target.value;
+localStorage.setItem('vc_camera_device_id', chosenId || '');
+if (!chosenId) return;
+
+
+try {
+if (visualControlApp.camera.isActive) {
+await visualControlApp.camera.switchCamera(chosenId);
+} else {
+visualControlApp.camera.updateSettings({ deviceId: { exact: chosenId } });
+}
+if (typeof updateCameraStatus === 'function') {
+updateCameraStatus('เชื่อมต่อแล้ว', 'connected');
+}
+} catch (err) {
+if (typeof showAlert === 'function') {
+showAlert('ไม่สามารถสลับกล้องได้: ' + (err.hint || err.message), 'error');
+}
+if (typeof updateCameraStatus === 'function') {
+updateCameraStatus('ไม่เชื่อมต่อ', 'disconnected');
+}
+}
+});
+
+
+if (refreshCamerasBtn) refreshCamerasBtn.addEventListener('click', populate);
+
+
+// เรียกครั้งแรก
+populate().then(() => {
+const sid = localStorage.getItem('vc_camera_device_id');
+if (sid) visualControlApp.camera.updateSettings({ deviceId: { exact: sid } });
+});
+
+
+
+// Hook หลัง DOM พร้อมใช้งาน
+document.addEventListener('DOMContentLoaded', () => {
+// เรียกหลังจาก visualControlApp และ camera พร้อมแล้ว
+try { initCameraSelectorUI(); } catch (e) { console.warn('initCameraSelectorUI skipped:', e); }
+});
 
 // Initialize application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {

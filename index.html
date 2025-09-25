@@ -32,6 +32,17 @@
                 <div class="version-info">v1.0.0</div>
             </div>
         </header>
+        
+        <!-- Camera Controls (ADD) -->
+        <div class="flex items-center gap-2">
+        <label for="cameraSelect" class="text-sm opacity-80">เลือกกล้อง:</label>
+        <select id="cameraSelect" class="px-2 py-1 rounded-md bg-gray-800 border border-gray-600 text-sm min-w-[260px]">
+        <option value="">กำลังโหลดรายชื่อกล้อง…</option>
+        </select>
+        <button id="refreshCamerasBtn" class="px-3 py-1 rounded-md bg-gray-700 hover:bg-gray-600 text-sm">
+        รีเฟรชรายชื่อ
+        </button>
+        </div>
 
         <!-- Status Bar -->
         <section class="status-bar">
