@@ -28,21 +28,10 @@
         <header class="header">
             <div class="header-content">
                 <h1>🎯 Visual Control System</h1>
-                <p>ระบบตรวจสอบตำแหน่งและการเอียงของกล่อง</p>
-                <div class="version-info">v1.0.0</div>
+                <p>ระบบตรวจสอบตำแหน่งและการเอียงของกล่อง - แบบลากวางกรอบ</p>
+                <div class="version-info">v2.0.0 - Drawing Mode</div>
             </div>
         </header>
-        
-        <!-- Camera Controls (ADD) -->
-        <div class="flex items-center gap-2">
-        <label for="cameraSelect" class="text-sm opacity-80">เลือกกล้อง:</label>
-        <select id="cameraSelect" class="px-2 py-1 rounded-md bg-gray-800 border border-gray-600 text-sm min-w-[260px]">
-        <option value="">กำลังโหลดรายชื่อกล้อง…</option>
-        </select>
-        <button id="refreshCamerasBtn" class="px-3 py-1 rounded-md bg-gray-700 hover:bg-gray-600 text-sm">
-        รีเฟรชรายชื่อ
-        </button>
-        </div>
 
         <!-- Status Bar -->
         <section class="status-bar">
@@ -56,7 +45,11 @@
             </div>
             <div id="monitoringStatus" class="status-item status-disconnected">
                 <span class="status-icon">👁️</span>
-                <span class="status-text">สถานะ: หยุดตรวจสอบ</span>
+                <span class="status-text">สถานะ: รอตั้งค่า</span>
+            </div>
+            <div id="setupStatus" class="status-item status-setup">
+                <span class="status-icon">⚙️</span>
+                <span class="status-text">ขั้นตอน: เปิดกล้อง</span>
             </div>
         </section>
 
@@ -76,20 +69,43 @@
                 <div class="video-container" id="videoContainer">
                     <video id="videoElement" autoplay muted playsinline></video>
                     <canvas id="overlayCanvas" class="reference-overlay"></canvas>
+                    <canvas id="drawingCanvas" class="drawing-canvas"></canvas>
                     
                     <!-- Video Info Overlay -->
                     <div class="video-info">
                         <span id="videoResolution">-</span>
                         <span id="frameRate">- FPS</span>
                     </div>
+
+                    <!-- Drawing Instructions Overlay -->
+                    <div class="drawing-instructions" id="drawingInstructions">
+                        <div class="instruction-text">
+                            <span class="instruction-icon">📦</span>
+                            <span id="instructionText">ลากเมาส์เพื่อวางกรอบรอบกล่อง</span>
+                        </div>
+                    </div>
                 </div>
                 
-                <div class="video-controls">
+                <!-- Drawing Controls -->
+                <div class="drawing-controls">
                     <button id="startCamera" class="btn btn-primary">
                         🎥 เปิดกล้อง
                     </button>
-                    <button id="takeReference" class="btn btn-success" disabled>
-                        📸 ถ่ายรูปอ้างอิง
+                    <button id="drawBoxBtn" class="btn btn-success" disabled>
+                        📦 1. วางกรอบกล่อง
+                    </button>
+                    <button id="drawKeyPointBtn" class="btn btn-info" disabled>
+                        🎯 2. วางกรอบจุดสำคัญ
+                    </button>
+                    <button id="clearDrawing" class="btn btn-secondary" disabled>
+                        🗑️ ล้างกรอบ
+                    </button>
+                </div>
+
+                <!-- Traditional Controls (for fallback) -->
+                <div class="video-controls">
+                    <button id="takeReference" class="btn btn-success" disabled style="display: none;">
+                        📸 ถ่ายรูปอ้างอิง (แบบเดิม)
                     </button>
                     <button id="clearReference" class="btn btn-warning" disabled>
                         🗑️ ลบรูปอ้างอิง
@@ -102,6 +118,27 @@
 
             <!-- Controls Section -->
             <section class="controls-section">
+                <!-- Box Counter -->
+                <div class="control-group counter-group">
+                    <h3>📊 การนับกล่อง</h3>
+                    <div class="counter-display">
+                        <div class="counter-main">
+                            <div class="counter-number" id="boxCounter">0</div>
+                            <div class="counter-label">กล่องที่ผ่าน</div>
+                        </div>
+                        <div class="counter-stats">
+                            <div class="stat-item stat-success">
+                                <span class="stat-number" id="normalBoxes">0</span>
+                                <span class="stat-label">ปกติ</span>
+                            </div>
+                            <div class="stat-item stat-danger">
+                                <span class="stat-number" id="alertBoxes">0</span>
+                                <span class="stat-label">ผิดปกติ</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Connection Controls -->
                 <div class="control-group">
                     <h3>🔊 การเชื่อมต่อเสียง</h3>
@@ -190,7 +227,7 @@
                 <div class="stat-card stat-success">
                     <div class="stat-icon">✅</div>
                     <div class="stat-content">
-                        <div id="normalBoxes" class="stat-number">0</div>
+                        <div id="normalBoxesStats" class="stat-number">0</div>
                         <div class="stat-label">ตำแหน่งถูกต้อง</div>
                     </div>
                 </div>
@@ -198,7 +235,7 @@
                 <div class="stat-card stat-danger">
                     <div class="stat-icon">⚠️</div>
                     <div class="stat-content">
-                        <div id="alertBoxes" class="stat-number">0</div>
+                        <div id="alertBoxesStats" class="stat-number">0</div>
                         <div class="stat-label">ผิดปกติ</div>
                     </div>
                 </div>
@@ -235,6 +272,7 @@
             });
         }
     </script>
+    
     <!-- Emergency loading screen hide -->
     <script>
         // Force hide loading screen after 5 seconds if still visible

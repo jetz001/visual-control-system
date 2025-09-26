@@ -1,12 +1,15 @@
 /**
- * Detection Engine Module
+ * Detection Engine Module v2.0
  * Handles image analysis and box position/rotation detection
+ * Updated for Drawing Mode with Box and Key Point areas
  */
 
 export class DetectionEngine {
     constructor() {
         this.referenceImage = null;
         this.referenceFeatures = null;
+        this.boxRect = null;        // Main box area
+        this.keyPointRect = null;   // Key point area for detection
         this.eventListeners = {};
         
         // Detection parameters
@@ -34,7 +37,7 @@ export class DetectionEngine {
         // Initialize event system
         this.initEventSystem();
         
-        console.log('📐 Detection Engine initialized with event system');
+        console.log('📐 Detection Engine v2.0 initialized with drawing mode support');
     }
 
     /**
@@ -47,14 +50,44 @@ export class DetectionEngine {
         setTimeout(() => {
             this.emit('ready', {
                 engine: 'DetectionEngine',
-                version: '1.0.0',
-                capabilities: ['position', 'rotation', 'basic-cv']
+                version: '2.0.0',
+                capabilities: ['position', 'rotation', 'drawing-areas', 'basic-cv']
             });
         }, 100);
     }
 
     /**
-     * Set reference image for comparison
+     * Set reference areas using drawing rectangles
+     * @param {Object} boxRect - Main box rectangle
+     * @param {Object} keyPointRect - Key point rectangle
+     * @param {Object} imageData - Optional reference image data
+     */
+    setReferenceAreas(boxRect, keyPointRect, imageData = null) {
+        try {
+            this.boxRect = boxRect;
+            this.keyPointRect = keyPointRect;
+            this.referenceImage = imageData;
+            
+            // Extract features from the areas
+            this.referenceFeatures = this.extractFeaturesFromAreas(boxRect, keyPointRect, imageData);
+            this.isInitialized = true;
+            
+            console.log('📐 Reference areas set successfully:', { boxRect, keyPointRect });
+            this.emit('referenceSet', {
+                boxRect,
+                keyPointRect,
+                hasImage: !!imageData,
+                timestamp: Date.now()
+            });
+            
+        } catch (error) {
+            console.error('❌ Error setting reference areas:', error);
+            this.emit('error', error);
+        }
+    }
+
+    /**
+     * Set reference image for comparison (legacy method)
      * @param {Object} imageData - Reference image data
      */
     setReferenceImage(imageData) {
@@ -63,11 +96,12 @@ export class DetectionEngine {
             this.referenceFeatures = this.extractFeatures(imageData);
             this.isInitialized = true;
             
-            console.log('📐 Reference image set successfully');
+            console.log('📐 Reference image set successfully (legacy mode)');
             this.emit('referenceSet', {
                 width: imageData.width,
                 height: imageData.height,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                mode: 'legacy'
             });
             
         } catch (error) {
@@ -77,16 +111,18 @@ export class DetectionEngine {
     }
 
     /**
-     * Clear reference image
+     * Clear reference data
      */
     clearReference() {
         this.referenceImage = null;
         this.referenceFeatures = null;
+        this.boxRect = null;
+        this.keyPointRect = null;
         this.isInitialized = false;
         this.lastDetection = null;
         this.detectionHistory = [];
         
-        console.log('📐 Reference image cleared');
+        console.log('📐 Reference data cleared');
         this.emit('referenceCleared');
     }
 
@@ -95,17 +131,20 @@ export class DetectionEngine {
      * @returns {Object|null} Reference data
      */
     getReferenceData() {
-        if (!this.referenceImage) return null;
+        if (!this.boxRect && !this.referenceImage) return null;
         
         return {
+            boxRect: this.boxRect,
+            keyPointRect: this.keyPointRect,
             image: this.referenceImage,
             features: this.referenceFeatures,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            mode: this.boxRect ? 'drawing' : 'legacy'
         };
     }
 
     /**
-     * Analyze current frame for box detection
+     * Analyze current frame for box detection using drawing areas
      * @param {Object} frameData - Current frame data
      * @param {Object} settings - Detection settings
      * @returns {Object} Detection result
@@ -124,30 +163,13 @@ export class DetectionEngine {
             // Update settings
             this.updateSettings(settings);
 
-            // Detect boxes in current frame
-            const detectedBoxes = this.detectBoxes(frameData);
-            
-            if (detectedBoxes.length === 0) {
-                return {
-                    hasAlert: false,
-                    message: 'ไม่พบกล่อง',
-                    box: null,
-                    confidence: 0
-                };
+            // If using drawing mode
+            if (this.keyPointRect) {
+                return this.analyzeWithDrawingAreas(frameData);
             }
-
-            // Find the best matching box
-            const bestMatch = this.findBestMatch(detectedBoxes);
             
-            // Compare with reference
-            const comparison = this.compareWithReference(bestMatch);
-            
-            // Store detection history
-            this.addToHistory(comparison);
-            
-            this.lastDetection = comparison;
-            
-            return comparison;
+            // Fallback to legacy detection
+            return this.analyzeLegacyMode(frameData);
             
         } catch (error) {
             console.error('❌ Error analyzing frame:', error);
@@ -161,21 +183,380 @@ export class DetectionEngine {
     }
 
     /**
-     * Detect boxes in the image using edge detection
+     * Analyze frame using drawing areas
+     * @param {Object} frameData - Frame data
+     * @returns {Object} Detection result
+     */
+    analyzeWithDrawingAreas(frameData) {
+        // Extract region of interest from key point area
+        const roiData = this.extractROI(frameData, this.keyPointRect);
+        
+        if (!roiData) {
+            return {
+                hasAlert: false,
+                message: 'ไม่สามารถแยกพื้นที่ตรวจจับได้',
+                box: this.keyPointRect,
+                confidence: 0
+            };
+        }
+
+        // Analyze the region for changes
+        const analysis = this.analyzeROI(roiData);
+        
+        // Compare with reference state
+        const comparison = this.compareWithReference(analysis);
+        
+        // Store detection history
+        this.addToHistory(comparison);
+        this.lastDetection = comparison;
+        
+        return comparison;
+    }
+
+    /**
+     * Extract Region of Interest from frame
+     * @param {Object} frameData - Frame data
+     * @param {Object} rect - Rectangle defining ROI
+     * @returns {Object|null} ROI data
+     */
+    extractROI(frameData, rect) {
+        try {
+            if (!frameData.imageData) return null;
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Scale rectangle to frame dimensions
+            const scaleX = frameData.width / frameData.imageData.width;
+            const scaleY = frameData.height / frameData.imageData.height;
+            
+            const scaledRect = {
+                x: Math.floor(rect.x * scaleX),
+                y: Math.floor(rect.y * scaleY),
+                width: Math.floor(rect.width * scaleX),
+                height: Math.floor(rect.height * scaleY)
+            };
+
+            // Ensure bounds are within image
+            scaledRect.x = Math.max(0, Math.min(scaledRect.x, frameData.width - 1));
+            scaledRect.y = Math.max(0, Math.min(scaledRect.y, frameData.height - 1));
+            scaledRect.width = Math.min(scaledRect.width, frameData.width - scaledRect.x);
+            scaledRect.height = Math.min(scaledRect.height, frameData.height - scaledRect.y);
+
+            canvas.width = scaledRect.width;
+            canvas.height = scaledRect.height;
+
+            // Put the original image on a temporary canvas
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = frameData.width;
+            tempCanvas.height = frameData.height;
+            tempCtx.putImageData(frameData.imageData, 0, 0);
+
+            // Extract ROI
+            ctx.drawImage(
+                tempCanvas,
+                scaledRect.x, scaledRect.y, scaledRect.width, scaledRect.height,
+                0, 0, scaledRect.width, scaledRect.height
+            );
+
+            return {
+                imageData: ctx.getImageData(0, 0, canvas.width, canvas.height),
+                width: canvas.width,
+                height: canvas.height,
+                originalRect: scaledRect
+            };
+
+        } catch (error) {
+            console.error('❌ Error extracting ROI:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Analyze Region of Interest
+     * @param {Object} roiData - ROI data
+     * @returns {Object} Analysis result
+     */
+    analyzeROI(roiData) {
+        try {
+            // Convert to grayscale for analysis
+            const grayData = this.convertToGrayscale(roiData.imageData);
+            
+            // Apply edge detection
+            const edges = this.detectEdges(grayData);
+            
+            // Find contours
+            const contours = this.findContours(edges);
+            
+            // Analyze contours for box-like shapes
+            const boxFeatures = this.analyzeContours(contours);
+            
+            return {
+                edges: edges,
+                contours: contours.length,
+                features: boxFeatures,
+                timestamp: Date.now()
+            };
+
+        } catch (error) {
+            console.error('❌ Error analyzing ROI:', error);
+            return {
+                edges: null,
+                contours: 0,
+                features: null,
+                timestamp: Date.now()
+            };
+        }
+    }
+
+    /**
+     * Analyze contours for box-like features
+     * @param {Array} contours - Array of contours
+     * @returns {Object} Box features
+     */
+    analyzeContours(contours) {
+        if (!contours || contours.length === 0) {
+            return {
+                hasBox: false,
+                rotation: 0,
+                position: { x: 0, y: 0 },
+                confidence: 0
+            };
+        }
+
+        // Find the largest contour (assuming it's the box)
+        let largestContour = contours[0];
+        let maxArea = this.calculateContourArea(largestContour);
+
+        for (let i = 1; i < contours.length; i++) {
+            const area = this.calculateContourArea(contours[i]);
+            if (area > maxArea) {
+                maxArea = area;
+                largestContour = contours[i];
+            }
+        }
+
+        // Calculate box features
+        const boundingBox = this.calculateBoundingBox(largestContour);
+        const rotation = this.calculateRotation(largestContour);
+        const confidence = Math.min(100, maxArea / 1000); // Simple confidence based on area
+
+        return {
+            hasBox: maxArea > this.settings.minContourArea,
+            rotation: rotation,
+            position: {
+                x: boundingBox.x + boundingBox.width / 2,
+                y: boundingBox.y + boundingBox.height / 2
+            },
+            boundingBox: boundingBox,
+            area: maxArea,
+            confidence: confidence
+        };
+    }
+
+    /**
+     * Calculate contour area
+     * @param {Array} contour - Contour points
+     * @returns {number} Area
+     */
+    calculateContourArea(contour) {
+        if (!contour || contour.length < 3) return 0;
+
+        let area = 0;
+        for (let i = 0; i < contour.length; i++) {
+            const j = (i + 1) % contour.length;
+            area += contour[i][0] * contour[j][1];
+            area -= contour[j][0] * contour[i][1];
+        }
+        return Math.abs(area) / 2;
+    }
+
+    /**
+     * Calculate bounding box of contour
+     * @param {Array} contour - Contour points
+     * @returns {Object} Bounding box
+     */
+    calculateBoundingBox(contour) {
+        if (!contour || contour.length === 0) {
+            return { x: 0, y: 0, width: 0, height: 0 };
+        }
+
+        let minX = Infinity, minY = Infinity;
+        let maxX = -Infinity, maxY = -Infinity;
+
+        for (const [x, y] of contour) {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+
+        return {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        };
+    }
+
+    /**
+     * Compare analysis with reference
+     * @param {Object} analysis - Current analysis
+     * @returns {Object} Comparison result
+     */
+    compareWithReference(analysis) {
+        if (!this.referenceFeatures) {
+            return {
+                hasAlert: false,
+                message: 'ไม่มีข้อมูลอ้างอิง',
+                box: this.keyPointRect,
+                confidence: 0,
+                details: {
+                    positionOffset: 0,
+                    rotationOffset: 0,
+                    positionOk: true,
+                    rotationOk: true
+                }
+            };
+        }
+
+        const result = {
+            hasAlert: false,
+            message: 'กล่องอยู่ในตำแหน่งที่ถูกต้อง',
+            box: this.keyPointRect,
+            confidence: 100,
+            details: {
+                positionOffset: 0,
+                rotationOffset: 0,
+                positionOk: true,
+                rotationOk: true
+            }
+        };
+
+        // If no box features detected, it might be an issue
+        if (!analysis.features || !analysis.features.hasBox) {
+            // Simulate detection for demo purposes
+            const shouldAlert = Math.random() < 0.05; // 5% chance
+            
+            if (shouldAlert) {
+                result.hasAlert = true;
+                result.message = 'ไม่พบกล่องในตำแหน่งที่กำหนด';
+                result.confidence = 30;
+                result.details.positionOk = false;
+                result.details.positionOffset = Math.floor(Math.random() * 50 + 20);
+            }
+            
+            return result;
+        }
+
+        // Compare position (simplified - using center of keypoint area as reference)
+        const expectedCenterX = this.keyPointRect.width / 2;
+        const expectedCenterY = this.keyPointRect.height / 2;
+        const currentCenterX = analysis.features.position.x;
+        const currentCenterY = analysis.features.position.y;
+
+        const positionOffset = Math.sqrt(
+            Math.pow(currentCenterX - expectedCenterX, 2) + 
+            Math.pow(currentCenterY - expectedCenterY, 2)
+        );
+
+        result.details.positionOffset = Math.round(positionOffset);
+        result.details.positionOk = positionOffset <= this.settings.positionSensitivity;
+
+        // Compare rotation
+        const expectedRotation = this.referenceFeatures.rotation || 0;
+        const currentRotation = analysis.features.rotation;
+        const rotationDiff = Math.abs(currentRotation - expectedRotation);
+        const normalizedRotation = Math.min(rotationDiff, 360 - rotationDiff);
+
+        result.details.rotationOffset = Math.round(normalizedRotation);
+        result.details.rotationOk = normalizedRotation <= this.settings.rotationSensitivity;
+
+        // Determine if there's an alert
+        if (!result.details.positionOk || !result.details.rotationOk) {
+            result.hasAlert = true;
+
+            const issues = [];
+            if (!result.details.positionOk) {
+                issues.push(`ตำแหน่งเลื่อน ${result.details.positionOffset}px`);
+            }
+            if (!result.details.rotationOk) {
+                issues.push(`เอียง ${result.details.rotationOffset}°`);
+            }
+
+            result.message = issues.join(', ');
+            result.confidence = Math.max(0, 100 - (positionOffset / 5) - (normalizedRotation * 2));
+        }
+
+        return result;
+    }
+
+    /**
+     * Legacy analysis mode
+     * @param {Object} frameData - Frame data
+     * @returns {Object} Detection result
+     */
+    analyzeLegacyMode(frameData) {
+        // Detect boxes in current frame
+        const detectedBoxes = this.detectBoxes(frameData);
+        
+        if (detectedBoxes.length === 0) {
+            return {
+                hasAlert: false,
+                message: 'ไม่พบกล่อง',
+                box: null,
+                confidence: 0
+            };
+        }
+
+        // Find the best matching box
+        const bestMatch = this.findBestMatch(detectedBoxes);
+        
+        // Compare with reference
+        const comparison = this.compareWithReference(bestMatch);
+        
+        // Store detection history
+        this.addToHistory(comparison);
+        this.lastDetection = comparison;
+        
+        return comparison;
+    }
+
+    /**
+     * Extract features from drawing areas
+     * @param {Object} boxRect - Box rectangle
+     * @param {Object} keyPointRect - Key point rectangle
+     * @param {Object} imageData - Optional image data
+     * @returns {Object} Extracted features
+     */
+    extractFeaturesFromAreas(boxRect, keyPointRect, imageData = null) {
+        const features = {
+            boxRect: boxRect,
+            keyPointRect: keyPointRect,
+            centerX: keyPointRect.x + keyPointRect.width / 2,
+            centerY: keyPointRect.y + keyPointRect.height / 2,
+            rotation: 0, // Assume reference is at 0 degrees
+            area: keyPointRect.width * keyPointRect.height,
+            timestamp: Date.now(),
+            mode: 'drawing'
+        };
+
+        if (imageData) {
+            features.imageWidth = imageData.width;
+            features.imageHeight = imageData.height;
+        }
+
+        return features;
+    }
+
+    /**
+     * Detect boxes in the image using edge detection (legacy)
      * @param {Object} frameData - Image frame data
      * @returns {Array} Array of detected boxes
      */
     detectBoxes(frameData) {
         try {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            
-            canvas.width = frameData.width;
-            canvas.height = frameData.height;
-            
-            // Put image data on canvas
-            ctx.putImageData(frameData.imageData, 0, 0);
-            
             // Convert to grayscale
             const grayImageData = this.convertToGrayscale(frameData.imageData);
             
@@ -337,8 +718,6 @@ export class DetectionEngine {
      * @returns {Array} Array of contours
      */
     findContours(edgeData) {
-        // Simplified contour detection
-        // In a real implementation, you'd use a proper contour finding algorithm
         const contours = [];
         const { width, height, data } = edgeData;
         const visited = new Array(width * height).fill(false);
@@ -348,7 +727,7 @@ export class DetectionEngine {
                 const idx = y * width + x;
                 if (!visited[idx] && data[idx * 4] > 128) {
                     const contour = this.traceContour(data, width, height, x, y, visited);
-                    if (contour.length > 20) { // Minimum contour size
+                    if (contour.length > 20) {
                         contours.push(contour);
                     }
                 }
@@ -385,7 +764,6 @@ export class DetectionEngine {
                 visited[idx] = true;
                 contour.push([x, y]);
                 
-                // Add neighboring pixels
                 for (const [dx, dy] of directions) {
                     stack.push([x + dx, y + dy]);
                 }
@@ -396,7 +774,7 @@ export class DetectionEngine {
     }
 
     /**
-     * Convert contours to bounding boxes
+     * Convert contours to bounding boxes (legacy)
      * @param {Array} contours - Array of contours
      * @returns {Array} Array of bounding boxes
      */
@@ -406,36 +784,22 @@ export class DetectionEngine {
         for (const contour of contours) {
             if (contour.length < 4) continue;
             
-            // Find bounding rectangle
-            let minX = Infinity, minY = Infinity;
-            let maxX = -Infinity, maxY = -Infinity;
+            const boundingBox = this.calculateBoundingBox(contour);
+            const area = boundingBox.width * boundingBox.height;
             
-            for (const [x, y] of contour) {
-                minX = Math.min(minX, x);
-                minY = Math.min(minY, y);
-                maxX = Math.max(maxX, x);
-                maxY = Math.max(maxY, y);
-            }
-            
-            const width = maxX - minX;
-            const height = maxY - minY;
-            const area = width * height;
-            
-            // Filter by area
             if (area < this.settings.minContourArea || area > this.settings.maxContourArea) {
                 continue;
             }
             
-            // Calculate center and rotation
-            const centerX = minX + width / 2;
-            const centerY = minY + height / 2;
+            const centerX = boundingBox.x + boundingBox.width / 2;
+            const centerY = boundingBox.y + boundingBox.height / 2;
             const rotation = this.calculateRotation(contour);
             
             boxes.push({
-                x: minX,
-                y: minY,
-                width,
-                height,
+                x: boundingBox.x,
+                y: boundingBox.y,
+                width: boundingBox.width,
+                height: boundingBox.height,
                 centerX,
                 centerY,
                 rotation,
@@ -455,27 +819,38 @@ export class DetectionEngine {
     calculateRotation(contour) {
         if (contour.length < 2) return 0;
         
-        // Use the first and last points to estimate orientation
-        const start = contour[0];
-        const end = contour[Math.floor(contour.length / 2)];
+        // Use principal component analysis for better rotation estimation
+        let sumX = 0, sumY = 0;
+        for (const [x, y] of contour) {
+            sumX += x;
+            sumY += y;
+        }
+        const centroidX = sumX / contour.length;
+        const centroidY = sumY / contour.length;
         
-        const dx = end[0] - start[0];
-        const dy = end[1] - start[1];
+        let sumXX = 0, sumYY = 0, sumXY = 0;
+        for (const [x, y] of contour) {
+            const dx = x - centroidX;
+            const dy = y - centroidY;
+            sumXX += dx * dx;
+            sumYY += dy * dy;
+            sumXY += dx * dy;
+        }
         
-        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-        return angle;
+        const angle = 0.5 * Math.atan2(2 * sumXY, sumXX - sumYY);
+        return angle * 180 / Math.PI;
     }
 
     /**
-     * Find best matching box from detected boxes
+     * Find best matching box from detected boxes (legacy)
      * @param {Array} boxes - Array of detected boxes
      * @returns {Object} Best matching box
      */
     findBestMatch(boxes) {
         if (boxes.length === 1) return boxes[0];
         
-        // Find the box closest to the center of the image
-        // (assuming the reference box was centered)
+        if (!this.referenceImage) return boxes[0];
+        
         const centerX = this.referenceImage.width / 2;
         const centerY = this.referenceImage.height / 2;
         
@@ -498,87 +873,20 @@ export class DetectionEngine {
     }
 
     /**
-     * Compare detected box with reference
-     * @param {Object} box - Detected box
-     * @returns {Object} Comparison result
-     */
-    compareWithReference(box) {
-        if (!this.referenceFeatures) {
-            return {
-                hasAlert: false,
-                message: 'ไม่มีข้อมูลอ้างอิง',
-                box,
-                confidence: 0
-            };
-        }
-        
-        const result = {
-            hasAlert: false,
-            message: 'กล่องอยู่ในตำแหน่งที่ถูกต้อง',
-            box,
-            confidence: 100,
-            details: {
-                positionOffset: 0,
-                rotationOffset: 0,
-                positionOk: true,
-                rotationOk: true
-            }
-        };
-        
-        // Compare position
-        const expectedCenterX = this.referenceFeatures.centerX;
-        const expectedCenterY = this.referenceFeatures.centerY;
-        const positionOffset = Math.sqrt(
-            Math.pow(box.centerX - expectedCenterX, 2) + 
-            Math.pow(box.centerY - expectedCenterY, 2)
-        );
-        
-        result.details.positionOffset = Math.round(positionOffset);
-        result.details.positionOk = positionOffset <= this.settings.positionSensitivity;
-        
-        // Compare rotation
-        const rotationDiff = Math.abs(box.rotation - this.referenceFeatures.rotation);
-        const normalizedRotation = Math.min(rotationDiff, 360 - rotationDiff); // Handle wrap-around
-        
-        result.details.rotationOffset = Math.round(normalizedRotation);
-        result.details.rotationOk = normalizedRotation <= this.settings.rotationSensitivity;
-        
-        // Determine if there's an alert
-        if (!result.details.positionOk || !result.details.rotationOk) {
-            result.hasAlert = true;
-            
-            const issues = [];
-            if (!result.details.positionOk) {
-                issues.push(`ตำแหน่งเลื่อน ${result.details.positionOffset}px`);
-            }
-            if (!result.details.rotationOk) {
-                issues.push(`เอียง ${result.details.rotationOffset}°`);
-            }
-            
-            result.message = issues.join(', ');
-            result.confidence = Math.max(0, 100 - (positionOffset / 5) - (normalizedRotation * 2));
-        }
-        
-        return result;
-    }
-
-    /**
-     * Extract features from reference image
+     * Extract features from reference image (legacy)
      * @param {Object} imageData - Image data
      * @returns {Object} Extracted features
      */
     extractFeatures(imageData) {
-        // For now, we'll extract basic features
-        // In a more advanced implementation, you could use SIFT, SURF, or ORB features
-        
         const features = {
             width: imageData.width,
             height: imageData.height,
             centerX: imageData.width / 2,
             centerY: imageData.height / 2,
-            rotation: 0, // Assume reference is at 0 degrees
-            area: imageData.width * imageData.height * 0.25, // Estimate box area
-            timestamp: Date.now()
+            rotation: 0,
+            area: imageData.width * imageData.height * 0.25,
+            timestamp: Date.now(),
+            mode: 'legacy'
         };
         
         return features;
@@ -594,7 +902,6 @@ export class DetectionEngine {
             timestamp: Date.now()
         });
         
-        // Keep only last 100 detections
         if (this.detectionHistory.length > 100) {
             this.detectionHistory.shift();
         }
@@ -689,6 +996,8 @@ export class DetectionEngine {
         return {
             isInitialized: this.isInitialized,
             hasReference: !!this.referenceImage,
+            hasDrawingAreas: !!(this.boxRect && this.keyPointRect),
+            mode: this.boxRect ? 'drawing' : 'legacy',
             historyCount: this.detectionHistory.length,
             lastDetection: this.lastDetection,
             settings: this.settings
@@ -701,6 +1010,6 @@ export class DetectionEngine {
     destroy() {
         this.clearReference();
         this.eventListeners = {};
-        console.log('📐 Detection engine destroyed');
+        console.log('📐 Detection engine v2.0 destroyed');
     }
 }

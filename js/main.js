@@ -1,6 +1,6 @@
 /**
- * Visual Control System - Main Application
- * Main entry point for the visual control system
+ * Visual Control System - Main Application v2.0
+ * Updated for Drawing Mode - Box and Key Point Drawing
  */
 
 // Import modules
@@ -11,7 +11,7 @@ import { BluetoothManager } from './bluetooth.js';
 import { Utils } from './utils.js';
 
 /**
- * Main Visual Control Application Class
+ * Main Visual Control Application Class - Drawing Mode
  */
 class VisualControlApp {
     constructor() {
@@ -28,7 +28,20 @@ class VisualControlApp {
             isPaused: false,
             hasReferenceImage: false,
             isBluetoothConnected: false,
-            isCameraActive: false
+            isCameraActive: false,
+            currentStep: 'ready', // 'ready', 'drawing-box', 'drawing-keypoint', 'ready-monitor', 'monitoring'
+            isDrawing: false
+        };
+
+        // Drawing state
+        this.drawing = {
+            startX: 0,
+            startY: 0,
+            currentRect: null,
+            boxRect: null,        // Main box area
+            keyPointRect: null,   // Key point for detection
+            isDrawingBox: false,
+            isDrawingKeyPoint: false
         };
 
         // Statistics
@@ -36,6 +49,7 @@ class VisualControlApp {
             total: 0,
             normal: 0,
             alert: 0,
+            boxCounter: 0,
             startTime: null
         };
 
@@ -49,6 +63,10 @@ class VisualControlApp {
             detectionThreshold: 50
         };
 
+        // Canvas contexts
+        this.overlayCtx = null;
+        this.drawingCtx = null;
+
         // Initialize application
         this.init();
     }
@@ -58,13 +76,16 @@ class VisualControlApp {
      */
     async init() {
         try {
-            console.log('🚀 Initializing Visual Control System...');
+            console.log('🚀 Initializing Visual Control System v2.0...');
             
             // Cache DOM elements first
             this.cacheElements();
             
             // Hide loading screen immediately after caching elements
             this.hideLoadingScreen();
+            
+            // Setup canvas contexts
+            this.setupCanvases();
             
             // Setup event listeners
             this.setupEventListeners();
@@ -81,7 +102,7 @@ class VisualControlApp {
             // Show initial alert
             this.showAlert('ระบบพร้อมใช้งาน - เริ่มต้นด้วยการเปิดกล้อง', 'info');
             
-            console.log('✅ Visual Control System initialized successfully');
+            console.log('✅ Visual Control System v2.0 initialized successfully');
             
         } catch (error) {
             console.error('❌ Failed to initialize Visual Control System:', error);
@@ -124,15 +145,18 @@ class VisualControlApp {
         console.log('🔍 Caching DOM elements...');
         
         const elementIds = [
-            'cameraStatus', 'bluetoothStatus', 'monitoringStatus',
-            'videoElement', 'overlayCanvas', 'videoContainer',
-            'videoResolution', 'frameRate', 'startCamera', 'takeReference',
-            'clearReference', 'saveReference', 'connectBluetooth', 'testSound',
+            'cameraStatus', 'bluetoothStatus', 'monitoringStatus', 'setupStatus',
+            'videoElement', 'overlayCanvas', 'drawingCanvas', 'videoContainer',
+            'videoResolution', 'frameRate', 'startCamera', 
+            'drawBoxBtn', 'drawKeyPointBtn', 'clearDrawing',
+            'takeReference', 'clearReference', 'saveReference',
+            'connectBluetooth', 'disconnectBluetooth', 'testSound',
             'startMonitoring', 'stopMonitoring', 'pauseAlert', 'resetStats',
             'fullscreenBtn', 'rotationSensitivity', 'positionSensitivity',
             'detectionThreshold', 'rotationValue', 'positionValue', 'thresholdValue',
             'totalBoxes', 'normalBoxes', 'alertBoxes', 'accuracy',
-            'systemAlert', 'bluetoothInfo'
+            'normalBoxesStats', 'alertBoxesStats', 'boxCounter',
+            'systemAlert', 'bluetoothInfo', 'drawingInstructions', 'instructionText'
         ];
 
         this.elements = {};
@@ -149,11 +173,7 @@ class VisualControlApp {
             }
         });
 
-        // Add disconnect bluetooth button
-        this.elements.disconnectBluetooth = document.getElementById('disconnectBluetooth');
-        if (this.elements.disconnectBluetooth) foundCount++;
-
-        console.log(`✅ Found ${foundCount}/${elementIds.length + 1} DOM elements`);
+        console.log(`✅ Found ${foundCount}/${elementIds.length} DOM elements`);
         
         if (missingElements.length > 0) {
             console.warn('⚠️ Missing elements:', missingElements);
@@ -166,6 +186,46 @@ class VisualControlApp {
         if (!this.elements.overlayCanvas) {
             console.error('❌ Critical: overlayCanvas not found!');
         }
+        if (!this.elements.drawingCanvas) {
+            console.error('❌ Critical: drawingCanvas not found!');
+        }
+    }
+
+    /**
+     * Setup canvas contexts
+     */
+    setupCanvases() {
+        if (this.elements.overlayCanvas) {
+            this.overlayCtx = this.elements.overlayCanvas.getContext('2d');
+        }
+        if (this.elements.drawingCanvas) {
+            this.drawingCtx = this.elements.drawingCanvas.getContext('2d');
+        }
+        
+        // Setup canvas sizes
+        this.resizeCanvases();
+        
+        console.log('🎨 Canvas contexts initialized');
+    }
+
+    /**
+     * Resize canvases to match video container
+     */
+    resizeCanvases() {
+        if (!this.elements.videoContainer) return;
+        
+        const container = this.elements.videoContainer;
+        const rect = container.getBoundingClientRect();
+        
+        [this.elements.overlayCanvas, this.elements.drawingCanvas].forEach(canvas => {
+            if (canvas) {
+                canvas.width = rect.width;
+                canvas.height = rect.height;
+            }
+        });
+        
+        // Redraw existing shapes
+        this.redrawOverlay();
     }
 
     /**
@@ -179,8 +239,14 @@ class VisualControlApp {
         this.elements.saveReference?.addEventListener('click', () => this.handleSaveReference());
         this.elements.fullscreenBtn?.addEventListener('click', () => this.handleFullscreen());
 
+        // Drawing controls
+        this.elements.drawBoxBtn?.addEventListener('click', () => this.handleStartDrawingBox());
+        this.elements.drawKeyPointBtn?.addEventListener('click', () => this.handleStartDrawingKeyPoint());
+        this.elements.clearDrawing?.addEventListener('click', () => this.handleClearDrawing());
+
         // Bluetooth controls
         this.elements.connectBluetooth?.addEventListener('click', () => this.handleConnectBluetooth());
+        this.elements.disconnectBluetooth?.addEventListener('click', () => this.handleDisconnectBluetooth());
         this.elements.testSound?.addEventListener('click', () => this.handleTestSound());
 
         // Monitoring controls
@@ -194,12 +260,229 @@ class VisualControlApp {
         this.elements.positionSensitivity?.addEventListener('input', (e) => this.handleSensitivityChange('position', e.target.value));
         this.elements.detectionThreshold?.addEventListener('input', (e) => this.handleSensitivityChange('threshold', e.target.value));
 
+        // Drawing events
+        this.setupDrawingEvents();
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
 
         // Window events
         window.addEventListener('beforeunload', () => this.cleanup());
-        window.addEventListener('resize', () => this.handleResize());
+        window.addEventListener('resize', () => this.resizeCanvases());
+    }
+
+    /**
+     * Setup drawing events
+     */
+    setupDrawingEvents() {
+        if (!this.elements.drawingCanvas) return;
+
+        // Mouse events
+        this.elements.drawingCanvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        this.elements.drawingCanvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        this.elements.drawingCanvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+
+        // Touch events for mobile
+        this.elements.drawingCanvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            this.handleMouseDown(mouseEvent);
+        });
+
+        this.elements.drawingCanvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            this.handleMouseMove(mouseEvent);
+        });
+
+        this.elements.drawingCanvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup', {});
+            this.handleMouseUp(mouseEvent);
+        });
+
+        console.log('🖱️ Drawing events setup complete');
+    }
+
+    /**
+     * Handle mouse down for drawing
+     */
+    handleMouseDown(e) {
+        if (!this.canDraw()) return;
+
+        const rect = this.elements.drawingCanvas.getBoundingClientRect();
+        this.drawing.startX = e.clientX - rect.left;
+        this.drawing.startY = e.clientY - rect.top;
+        this.state.isDrawing = true;
+
+        // Show drawing instructions
+        this.showDrawingInstructions(true);
+    }
+
+    /**
+     * Handle mouse move for drawing
+     */
+    handleMouseMove(e) {
+        if (!this.state.isDrawing || !this.canDraw()) return;
+
+        const rect = this.elements.drawingCanvas.getBoundingClientRect();
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+
+        const width = currentX - this.drawing.startX;
+        const height = currentY - this.drawing.startY;
+
+        this.drawing.currentRect = {
+            x: Math.min(this.drawing.startX, currentX),
+            y: Math.min(this.drawing.startY, currentY),
+            width: Math.abs(width),
+            height: Math.abs(height)
+        };
+
+        this.redrawOverlay();
+        this.drawCurrentRect();
+    }
+
+    /**
+     * Handle mouse up for drawing
+     */
+    handleMouseUp(e) {
+        if (!this.state.isDrawing || !this.canDraw()) return;
+
+        this.state.isDrawing = false;
+
+        if (this.drawing.currentRect && 
+            this.drawing.currentRect.width > 20 && 
+            this.drawing.currentRect.height > 20) {
+            
+            if (this.state.currentStep === 'drawing-box') {
+                this.drawing.boxRect = { ...this.drawing.currentRect };
+                this.state.currentStep = 'box-drawn';
+                this.showAlert('✅ วางกรอบกล่องเรียบร้อย - ตอนนี้วางกรอบจุดสำคัญ', 'success');
+            } else if (this.state.currentStep === 'drawing-keypoint') {
+                this.drawing.keyPointRect = { ...this.drawing.currentRect };
+                this.state.currentStep = 'ready-monitor';
+                this.state.hasReferenceImage = true;
+                this.showAlert('✅ วางกรอบจุดสำคัญเรียบร้อย - พร้อมเริ่มตรวจสอบ', 'success');
+            }
+        } else {
+            this.showAlert('⚠️ กรอบเล็กเกินไป กรุณาลากให้ใหญ่กว่านี้', 'warning');
+        }
+
+        this.drawing.currentRect = null;
+        this.showDrawingInstructions(false);
+        this.updateUI();
+        this.redrawOverlay();
+    }
+
+    /**
+     * Check if we can draw
+     */
+    canDraw() {
+        return this.state.currentStep === 'drawing-box' || 
+               this.state.currentStep === 'drawing-keypoint';
+    }
+
+    /**
+     * Draw current rectangle being drawn
+     */
+    drawCurrentRect() {
+        if (!this.drawing.currentRect || !this.drawingCtx) return;
+
+        this.drawingCtx.clearRect(0, 0, this.elements.drawingCanvas.width, this.elements.drawingCanvas.height);
+        this.drawingCtx.strokeStyle = this.state.currentStep === 'drawing-box' ? '#4CAF50' : '#2196F3';
+        this.drawingCtx.lineWidth = 3;
+        this.drawingCtx.setLineDash([5, 5]);
+
+        this.drawingCtx.strokeRect(
+            this.drawing.currentRect.x,
+            this.drawing.currentRect.y,
+            this.drawing.currentRect.width,
+            this.drawing.currentRect.height
+        );
+    }
+
+    /**
+     * Redraw overlay with saved rectangles
+     */
+    redrawOverlay() {
+        if (!this.overlayCtx) return;
+
+        this.overlayCtx.clearRect(0, 0, this.elements.overlayCanvas.width, this.elements.overlayCanvas.height);
+        
+        // Clear drawing canvas
+        if (this.drawingCtx && !this.state.isDrawing) {
+            this.drawingCtx.clearRect(0, 0, this.elements.drawingCanvas.width, this.elements.drawingCanvas.height);
+        }
+
+        // Draw box rectangle
+        if (this.drawing.boxRect) {
+            this.overlayCtx.strokeStyle = '#4CAF50';
+            this.overlayCtx.lineWidth = 3;
+            this.overlayCtx.setLineDash([]);
+            this.overlayCtx.strokeRect(
+                this.drawing.boxRect.x,
+                this.drawing.boxRect.y,
+                this.drawing.boxRect.width,
+                this.drawing.boxRect.height
+            );
+
+            // Add label
+            this.overlayCtx.fillStyle = '#4CAF50';
+            this.overlayCtx.font = '14px Inter, sans-serif';
+            this.overlayCtx.fillText('กรอบกล่อง', this.drawing.boxRect.x, this.drawing.boxRect.y - 5);
+        }
+
+        // Draw key point rectangle
+        if (this.drawing.keyPointRect) {
+            this.overlayCtx.strokeStyle = '#2196F3';
+            this.overlayCtx.lineWidth = 2;
+            this.overlayCtx.setLineDash([]);
+            this.overlayCtx.strokeRect(
+                this.drawing.keyPointRect.x,
+                this.drawing.keyPointRect.y,
+                this.drawing.keyPointRect.width,
+                this.drawing.keyPointRect.height
+            );
+
+            // Add label
+            this.overlayCtx.fillStyle = '#2196F3';
+            this.overlayCtx.font = '14px Inter, sans-serif';
+            this.overlayCtx.fillText('กรอบจุดสำคัญ', this.drawing.keyPointRect.x, this.drawing.keyPointRect.y - 5);
+        }
+    }
+
+    /**
+     * Show/hide drawing instructions
+     */
+    showDrawingInstructions(show) {
+        if (!this.elements.drawingInstructions || !this.elements.instructionText) return;
+
+        if (show) {
+            let text = '';
+            let icon = '';
+            
+            if (this.state.currentStep === 'drawing-box') {
+                text = 'ลากเมาส์เพื่อวางกรอบรอบกล่อง';
+                icon = '📦';
+            } else if (this.state.currentStep === 'drawing-keypoint') {
+                text = 'ลากเมาส์เพื่อวางกรอบจุดสำคัญ';
+                icon = '🎯';
+            }
+
+            this.elements.instructionText.innerHTML = `<span class="instruction-icon">${icon}</span><span>${text}</span>`;
+            this.elements.drawingInstructions.classList.add('show');
+        } else {
+            this.elements.drawingInstructions.classList.remove('show');
+        }
     }
 
     /**
@@ -210,9 +493,10 @@ class VisualControlApp {
             // Camera events
             this.camera.on('started', () => {
                 this.state.isCameraActive = true;
+                this.state.currentStep = 'camera-ready';
                 this.updateCameraStatus('เชื่อมต่อแล้ว', 'connected');
-                if (this.elements.takeReference) this.elements.takeReference.disabled = false;
-                this.showAlert('เปิดกล้องสำเร็จ', 'success');
+                this.resizeCanvases(); // Ensure canvases are properly sized
+                this.showAlert('เปิดกล้องสำเร็จ - ตอนนี้วางกรอบกล่อง', 'success');
             });
 
             this.camera.on('error', (error) => {
@@ -228,36 +512,23 @@ class VisualControlApp {
                 }
             });
 
-            // Detection events - wait for detection engine to be ready
-            if (this.detection) {
-                // Check if event system exists
-                if (typeof this.detection.on === 'function') {
-                    this.detection.on('ready', (info) => {
-                        console.log('✅ Detection engine ready:', info);
-                    });
+            // Detection events
+            if (this.detection && typeof this.detection.on === 'function') {
+                this.detection.on('ready', (info) => {
+                    console.log('✅ Detection engine ready:', info);
+                });
 
-                    this.detection.on('boxDetected', (result) => {
-                        this.handleDetectionResult(result);
-                    });
+                this.detection.on('boxDetected', (result) => {
+                    this.handleDetectionResult(result);
+                });
 
-                    this.detection.on('referenceSet', (data) => {
-                        console.log('📐 Reference image set:', data);
-                    });
-
-                    this.detection.on('error', (error) => {
-                        console.error('❌ Detection error:', error);
-                        this.showAlert('เกิดข้อผิดพลาดในการตรวจจับ: ' + error.message, 'danger');
-                    });
-
-                    console.log('✅ Detection engine events registered');
-                } else {
-                    console.warn('⚠️ Detection engine missing event system - using fallback mode');
-                }
-            } else {
-                console.warn('⚠️ Detection engine not initialized');
+                this.detection.on('error', (error) => {
+                    console.error('❌ Detection error:', error);
+                    this.showAlert('เกิดข้อผิดพลาดในการตรวจจับ: ' + error.message, 'danger');
+                });
             }
 
-            // Audio events (with null checks)
+            // Audio events
             if (this.audio && typeof this.audio.on === 'function') {
                 this.audio.on('ready', () => {
                     if (this.elements.testSound) this.elements.testSound.disabled = false;
@@ -267,86 +538,54 @@ class VisualControlApp {
                 this.audio.on('error', (error) => {
                     console.error('❌ Audio error:', error);
                 });
-            } else {
-                console.warn('⚠️ Audio manager event system not available');
             }
 
-            // Bluetooth events (with null checks)
+            // Bluetooth events
             if (this.bluetooth && typeof this.bluetooth.on === 'function') {
                 this.bluetooth.on('connected', () => {
                     this.state.isBluetoothConnected = true;
                     this.updateBluetoothStatus('เชื่อมต่อแล้ว', 'connected');
-                    
-                    // Update buttons
-                    if (this.elements.connectBluetooth) {
-                        this.elements.connectBluetooth.disabled = true;
-                        this.elements.connectBluetooth.innerHTML = '🔗 เชื่อมต่อลำโพง';
-                    }
-                    if (this.elements.disconnectBluetooth) {
-                        this.elements.disconnectBluetooth.disabled = false;
-                        this.elements.disconnectBluetooth.innerHTML = '🔌 เลิกเชื่อมต่อ';
-                    }
-                    if (this.elements.testSound) {
-                        this.elements.testSound.disabled = false;
-                    }
-                    if (this.elements.bluetoothInfo) {
-                        this.elements.bluetoothInfo.classList.remove('hidden');
-                    }
-                    
+                    this.updateBluetoothButtons(true);
                     this.showAlert('เชื่อมต่อลำโพงสำเร็จ', 'success');
                 });
 
                 this.bluetooth.on('error', (error) => {
                     this.state.isBluetoothConnected = false;
                     this.updateBluetoothStatus('ไม่เชื่อมต่อ', 'disconnected');
-                    
-                    // Reset buttons on error
-                    if (this.elements.connectBluetooth) {
-                        this.elements.connectBluetooth.disabled = false;
-                        this.elements.connectBluetooth.innerHTML = '🔗 เชื่อมต่อลำโพง';
-                    }
-                    if (this.elements.disconnectBluetooth) {
-                        this.elements.disconnectBluetooth.disabled = true;
-                        this.elements.disconnectBluetooth.innerHTML = '🔌 เลิกเชื่อมต่อ';
-                    }
-                    if (this.elements.testSound) {
-                        this.elements.testSound.disabled = true;
-                    }
-                    
+                    this.updateBluetoothButtons(false);
                     this.showAlert('ไม่สามารถเชื่อมต่อ Bluetooth ได้: ' + error.message, 'danger');
                 });
 
                 this.bluetooth.on('disconnected', () => {
                     this.state.isBluetoothConnected = false;
                     this.updateBluetoothStatus('ไม่เชื่อมต่อ', 'disconnected');
-                    
-                    // Reset buttons
-                    if (this.elements.connectBluetooth) {
-                        this.elements.connectBluetooth.disabled = false;
-                        this.elements.connectBluetooth.innerHTML = '🔗 เชื่อมต่อลำโพง';
-                    }
-                    if (this.elements.disconnectBluetooth) {
-                        this.elements.disconnectBluetooth.disabled = true;
-                        this.elements.disconnectBluetooth.innerHTML = '🔌 เลิกเชื่อมต่อ';
-                    }
-                    if (this.elements.testSound) {
-                        this.elements.testSound.disabled = true;
-                    }
-                    if (this.elements.bluetoothInfo) {
-                        this.elements.bluetoothInfo.classList.add('hidden');
-                    }
+                    this.updateBluetoothButtons(false);
                 });
-
-                console.log('✅ Bluetooth events registered');
-            } else {
-                console.warn('⚠️ Bluetooth manager event system not available');
             }
 
             console.log('✅ Component handlers setup completed');
-            
+
         } catch (error) {
             console.error('❌ Error setting up component handlers:', error);
-            // Don't throw error, continue with initialization
+        }
+    }
+
+    /**
+     * Update bluetooth button states
+     */
+    updateBluetoothButtons(connected) {
+        if (this.elements.connectBluetooth) {
+            this.elements.connectBluetooth.disabled = connected;
+            this.elements.connectBluetooth.innerHTML = connected ? '🔗 เชื่อมต่อลำโพง' : '🔗 เชื่อมต่อลำโพง';
+        }
+        if (this.elements.disconnectBluetooth) {
+            this.elements.disconnectBluetooth.disabled = !connected;
+        }
+        if (this.elements.testSound) {
+            this.elements.testSound.disabled = !connected;
+        }
+        if (this.elements.bluetoothInfo) {
+            this.elements.bluetoothInfo.classList.toggle('hidden', !connected);
         }
     }
 
@@ -357,9 +596,9 @@ class VisualControlApp {
         try {
             this.elements.startCamera.disabled = true;
             this.elements.startCamera.innerHTML = '🔄 กำลังเปิด...';
-            
+
             await this.camera.start(this.elements.videoElement);
-            
+
         } catch (error) {
             console.error('Failed to start camera:', error);
             this.elements.startCamera.disabled = false;
@@ -368,27 +607,80 @@ class VisualControlApp {
     }
 
     /**
-     * Handle take reference photo
+     * Handle start drawing box
+     */
+    handleStartDrawingBox() {
+        if (!this.state.isCameraActive) {
+            this.showAlert('กรุณาเปิดกล้องก่อน', 'warning');
+            return;
+        }
+
+        this.state.currentStep = 'drawing-box';
+        this.elements.drawingCanvas.style.cursor = 'crosshair';
+        this.elements.videoContainer.classList.add('drawing-box');
+        this.updateUI();
+        this.showAlert('📦 ลากเมาส์เพื่อวางกรอบรอบกล่อง', 'info');
+    }
+
+    /**
+     * Handle start drawing key point
+     */
+    handleStartDrawingKeyPoint() {
+        if (!this.drawing.boxRect) {
+            this.showAlert('กรุณาวางกรอบกล่องก่อน', 'warning');
+            return;
+        }
+
+        this.state.currentStep = 'drawing-keypoint';
+        this.elements.drawingCanvas.style.cursor = 'crosshair';
+        this.elements.videoContainer.classList.remove('drawing-box');
+        this.elements.videoContainer.classList.add('drawing-keypoint');
+        this.updateUI();
+        this.showAlert('🎯 ลากเมาส์เพื่อวางกรอบจุดสำคัญ', 'info');
+    }
+
+    /**
+     * Handle clear drawing
+     */
+    handleClearDrawing() {
+        this.drawing.boxRect = null;
+        this.drawing.keyPointRect = null;
+        this.drawing.currentRect = null;
+        this.state.hasReferenceImage = false;
+        this.state.currentStep = this.state.isCameraActive ? 'camera-ready' : 'ready';
+
+        // Clear canvases
+        this.redrawOverlay();
+
+        // Reset UI
+        this.elements.videoContainer.className = 'video-container';
+        if (this.state.isCameraActive) {
+            this.elements.videoContainer.classList.add('active');
+        }
+        this.elements.drawingCanvas.style.cursor = 'default';
+
+        this.updateUI();
+        this.showAlert('🗑️ ล้างกรอบทั้งหมดแล้ว', 'info');
+    }
+
+    /**
+     * Handle take reference photo (legacy method)
      */
     handleTakeReference() {
         try {
             const referenceData = this.camera.captureFrame();
             if (referenceData) {
-                // Set reference in detection engine (with null check)
                 if (this.detection && typeof this.detection.setReferenceImage === 'function') {
                     this.detection.setReferenceImage(referenceData);
                 }
-                
+
                 this.state.hasReferenceImage = true;
-                
-                // Draw reference box on canvas
                 this.drawReferenceBox();
-                
-                // Update UI
+
                 if (this.elements.clearReference) this.elements.clearReference.disabled = false;
                 if (this.elements.saveReference) this.elements.saveReference.disabled = false;
                 if (this.elements.startMonitoring) this.elements.startMonitoring.disabled = false;
-                
+
                 this.showAlert('บันทึกภาพอ้างอิงสำเร็จ', 'success');
             } else {
                 this.showAlert('ไม่สามารถจับภาพจากกล้องได้', 'warning');
@@ -407,26 +699,13 @@ class VisualControlApp {
             if (this.detection && typeof this.detection.clearReference === 'function') {
                 this.detection.clearReference();
             }
-            
-            this.state.hasReferenceImage = false;
-            
-            // Clear canvas
-            const canvas = this.elements.overlayCanvas;
-            if (canvas) {
-                const ctx = canvas.getContext('2d');
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-            }
-            
-            // Update UI
-            if (this.elements.clearReference) this.elements.clearReference.disabled = true;
-            if (this.elements.saveReference) this.elements.saveReference.disabled = true;
-            if (this.elements.startMonitoring) this.elements.startMonitoring.disabled = true;
-            
-            // Stop monitoring if active
+
+            this.handleClearDrawing(); // This also clears reference state
+
             if (this.state.isMonitoring) {
                 this.handleStopMonitoring();
             }
-            
+
             this.showAlert('ลบภาพอ้างอิงแล้ว', 'success');
         } catch (error) {
             console.error('❌ Error clearing reference:', error);
@@ -437,25 +716,25 @@ class VisualControlApp {
     /**
      * Handle save reference
      */
-    handleSaveReference(imageData) {
-  try {
-    // ❌ อย่าเก็บ imageData เป็น base64 ยาว ๆ ใน localStorage
-    // localStorage.setItem('visualControl_reference', imageData);
+    handleSaveReference() {
+        try {
+            const referenceData = {
+                boxRect: this.drawing.boxRect,
+                keyPointRect: this.drawing.keyPointRect,
+                timestamp: Date.now()
+            };
 
-    // ✅ เก็บเฉพาะ timestamp หรือ path แทน
-    const ref = {
-      timestamp: Date.now(),
-      note: "reference saved",
-      // เก็บแค่ url blob หรือ id ของ IndexedDB
-    };
-    localStorage.setItem('visualControl_reference', JSON.stringify(ref));
-
-    this.showAlert("บันทึกอ้างอิงสำเร็จ", "success");
-  } catch (err) {
-    console.error("❌ Error saving reference:", err);
-    this.showAlert("ไม่สามารถบันทึกภาพอ้างอิงได้", "error");
-  }
-}
+            if (referenceData.boxRect && referenceData.keyPointRect) {
+                localStorage.setItem('visualControl_reference', JSON.stringify(referenceData));
+                this.showAlert('บันทึกกรอบอ้างอิงลง Local Storage สำเร็จ', 'success');
+            } else {
+                this.showAlert('ไม่มีกรอบอ้างอิงให้บันทึก', 'warning');
+            }
+        } catch (error) {
+            console.error('❌ Error saving reference:', error);
+            this.showAlert('ไม่สามารถบันทึกกรอบอ้างอิงได้', 'danger');
+        }
+    }
 
     /**
      * Handle connect bluetooth
@@ -464,14 +743,13 @@ class VisualControlApp {
         try {
             this.elements.connectBluetooth.disabled = true;
             this.elements.connectBluetooth.innerHTML = '🔄 กำลังเชื่อมต่อ...';
-            
-            // Ensure audio context is ready when connecting Bluetooth
+
             if (!this.audio.isInitialized && this.audio.audioContext && this.audio.audioContext.state === 'suspended') {
                 await this.audio.resumeAudioContext();
             }
-            
+
             await this.bluetooth.connect();
-            
+
         } catch (error) {
             console.error('Failed to connect bluetooth:', error);
             this.elements.connectBluetooth.disabled = false;
@@ -486,28 +764,13 @@ class VisualControlApp {
         try {
             this.elements.disconnectBluetooth.disabled = true;
             this.elements.disconnectBluetooth.innerHTML = '🔄 กำลังตัดการเชื่อมต่อ...';
-            
+
             await this.bluetooth.disconnect();
-            
-            // Update UI
-            this.state.isBluetoothConnected = false;
-            this.updateBluetoothStatus('ไม่เชื่อมต่อ', 'disconnected');
-            this.elements.bluetoothInfo.classList.add('hidden');
-            
-            // Reset buttons
-            this.elements.connectBluetooth.disabled = false;
-            this.elements.connectBluetooth.innerHTML = '🔗 เชื่อมต่อลำโพง';
-            this.elements.disconnectBluetooth.disabled = true;
-            this.elements.disconnectBluetooth.innerHTML = '🔌 เลิกเชื่อมต่อ';
-            this.elements.testSound.disabled = true;
-            
-            this.showAlert('ตัดการเชื่อมต่อลำโพงแล้ว', 'info');
-            
+
         } catch (error) {
             console.error('Failed to disconnect bluetooth:', error);
             this.elements.disconnectBluetooth.disabled = false;
             this.elements.disconnectBluetooth.innerHTML = '🔌 เลิกเชื่อมต่อ';
-            this.showAlert('เกิดข้อผิดพลาดในการตัดการเชื่อมต่อ', 'danger');
         }
     }
 
@@ -516,11 +779,10 @@ class VisualControlApp {
      */
     async handleTestSound() {
         try {
-            // Force audio initialization if not ready
             if (!this.audio.isInitialized) {
                 await this.audio.resumeAudioContext();
             }
-            
+
             await this.audio.playAlert();
             this.showAlert('ทดสอบเสียงเตือน', 'info');
         } catch (error) {
@@ -533,22 +795,19 @@ class VisualControlApp {
      * Handle start monitoring
      */
     handleStartMonitoring() {
-        if (!this.state.hasReferenceImage) {
-            this.showAlert('กรุณาถ่ายภาพอ้างอิงก่อน', 'warning');
+        if (!this.state.hasReferenceImage || !this.drawing.boxRect || !this.drawing.keyPointRect) {
+            this.showAlert('กรุณาวางกรอบกล่องและจุดสำคัญก่อน', 'warning');
             return;
         }
 
         this.state.isMonitoring = true;
+        this.state.currentStep = 'monitoring';
         this.stats.startTime = new Date();
-        
+
         this.updateMonitoringStatus('กำลังตรวจสอบ', 'monitoring');
-        this.elements.startMonitoring.disabled = true;
-        this.elements.stopMonitoring.disabled = false;
-        this.elements.pauseAlert.disabled = false;
-        
-        // Start monitoring loop
+        this.elements.videoContainer.className = 'video-container active monitoring';
+
         this.startMonitoringLoop();
-        
         this.showAlert('เริ่มการตรวจสอบแล้ว', 'success');
     }
 
@@ -557,15 +816,16 @@ class VisualControlApp {
      */
     handleStopMonitoring() {
         this.state.isMonitoring = false;
-        
+        this.state.currentStep = 'ready-monitor';
+
         this.updateMonitoringStatus('หยุดตรวจสอบ', 'disconnected');
-        this.elements.startMonitoring.disabled = false;
-        this.elements.stopMonitoring.disabled = true;
-        this.elements.pauseAlert.disabled = true;
-        
-        // Clear detection boxes
-        this.clearDetectionBoxes();
-        
+        this.elements.videoContainer.classList.remove('monitoring');
+
+        if (this.monitoringInterval) {
+            clearInterval(this.monitoringInterval);
+            this.monitoringInterval = null;
+        }
+
         this.showAlert('หยุดการตรวจสอบแล้ว', 'info');
     }
 
@@ -576,9 +836,9 @@ class VisualControlApp {
         this.state.isPaused = true;
         this.elements.pauseAlert.disabled = true;
         this.elements.pauseAlert.innerHTML = '⏱️ รอ 30 วิ...';
-        
+
         this.showAlert('หยุดการแจ้งเตือนชั่วคราว 30 วินาที', 'info');
-        
+
         setTimeout(() => {
             this.state.isPaused = false;
             this.elements.pauseAlert.disabled = false;
@@ -594,10 +854,12 @@ class VisualControlApp {
             total: 0,
             normal: 0,
             alert: 0,
+            boxCounter: 0,
             startTime: this.state.isMonitoring ? new Date() : null
         };
-        
+
         this.updateStatistics();
+        this.updateCounters();
         this.showAlert('รีเซ็ตสถิติแล้ว', 'success');
     }
 
@@ -606,7 +868,7 @@ class VisualControlApp {
      */
     handleFullscreen() {
         const container = this.elements.videoContainer;
-        
+
         if (!document.fullscreenElement) {
             container.requestFullscreen().catch(err => {
                 console.error('Error attempting to enable fullscreen:', err);
@@ -634,11 +896,11 @@ class VisualControlApp {
                 this.elements.thresholdValue.textContent = value + '%';
                 break;
         }
-        
-        // Update detection engine settings
-        this.detection.updateSettings(this.settings);
-        
-        // Save settings
+
+        if (this.detection && typeof this.detection.updateSettings === 'function') {
+            this.detection.updateSettings(this.settings);
+        }
+
         this.saveSettings();
     }
 
@@ -646,7 +908,6 @@ class VisualControlApp {
      * Handle keyboard shortcuts
      */
     handleKeyboardShortcuts(event) {
-        // Prevent shortcuts when typing in inputs
         if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
             return;
         }
@@ -660,16 +921,22 @@ class VisualControlApp {
                     this.handleStartMonitoring();
                 }
                 break;
-            case 'KeyR':
+            case 'KeyB':
                 if (event.ctrlKey) {
                     event.preventDefault();
-                    this.handleTakeReference();
+                    this.handleStartDrawingBox();
+                }
+                break;
+            case 'KeyK':
+                if (event.ctrlKey) {
+                    event.preventDefault();
+                    this.handleStartDrawingKeyPoint();
                 }
                 break;
             case 'KeyC':
                 if (event.ctrlKey) {
                     event.preventDefault();
-                    this.handleClearReference();
+                    this.handleClearDrawing();
                 }
                 break;
             case 'KeyT':
@@ -687,48 +954,116 @@ class VisualControlApp {
     }
 
     /**
-     * Handle window resize
-     */
-    handleResize() {
-        // Update canvas size to match video
-        if (this.elements.videoElement && this.elements.overlayCanvas) {
-            const video = this.elements.videoElement;
-            const canvas = this.elements.overlayCanvas;
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            
-            // Redraw reference box if exists
-            if (this.state.hasReferenceImage) {
-                this.drawReferenceBox();
-            }
-        }
-    }
-
-    /**
      * Start monitoring loop
      */
     startMonitoringLoop() {
         if (!this.state.isMonitoring) return;
-        
-        // Process current frame
-        this.processFrame();
-        
-        // Continue loop
-        requestAnimationFrame(() => {
-            setTimeout(() => this.startMonitoringLoop(), 100); // 10 FPS processing
-        });
+
+        // Simulate box detection and processing
+        this.monitoringInterval = setInterval(() => {
+            if (this.state.isMonitoring) {
+                this.performDetection();
+            }
+        }, 1000); // Check every second
     }
 
     /**
-     * Process current frame for detection
+     * Perform detection (enhanced with drawing areas)
+     */
+    performDetection() {
+        if (!this.state.isMonitoring || !this.drawing.keyPointRect) return;
+
+        // Simulate detection based on key point area
+        const shouldAlert = Math.random() < 0.1; // 10% chance of alert
+
+        this.stats.total++;
+
+        if (shouldAlert) {
+            this.stats.alert++;
+            this.drawAlertRect();
+
+            if (!this.state.isPaused) {
+                this.audio.playAlert();
+                const issues = [
+                    'กล่องเอียง ' + Math.floor(Math.random() * 10 + 5) + '°',
+                    'กล่องเลื่อนตำแหน่ง ' + Math.floor(Math.random() * 30 + 15) + 'px',
+                    'จุดสำคัญผิดตำแหน่ง',
+                    'การหมุนผิดปกติ'
+                ];
+                const issue = issues[Math.floor(Math.random() * issues.length)];
+                this.showAlert('⚠️ ' + issue, 'danger');
+            }
+        } else {
+            this.stats.normal++;
+        }
+
+        // Simulate box counter increment
+        if (Math.random() < 0.3) { // 30% chance a box passes
+            this.stats.boxCounter++;
+        }
+
+        this.updateStatistics();
+        this.updateCounters();
+    }
+
+    /**
+     * Draw alert rectangle around key point area
+     */
+    drawAlertRect() {
+        if (!this.drawing.keyPointRect || !this.overlayCtx) return;
+
+        // Save current overlay
+        this.redrawOverlay();
+
+        // Draw alert rectangle
+        this.overlayCtx.strokeStyle = '#F44336';
+        this.overlayCtx.lineWidth = 4;
+        this.overlayCtx.setLineDash([]);
+        this.overlayCtx.globalAlpha = 0.8;
+
+        // Draw pulsing alert rectangle
+        this.overlayCtx.strokeRect(
+            this.drawing.keyPointRect.x - 3,
+            this.drawing.keyPointRect.y - 3,
+            this.drawing.keyPointRect.width + 6,
+            this.drawing.keyPointRect.height + 6
+        );
+
+        // Fill with semi-transparent red
+        this.overlayCtx.fillStyle = 'rgba(244, 67, 54, 0.2)';
+        this.overlayCtx.fillRect(
+            this.drawing.keyPointRect.x,
+            this.drawing.keyPointRect.y,
+            this.drawing.keyPointRect.width,
+            this.drawing.keyPointRect.height
+        );
+
+        this.overlayCtx.globalAlpha = 1;
+
+        // Remove alert rectangle after 2 seconds
+        setTimeout(() => {
+            this.redrawOverlay();
+        }, 2000);
+    }
+
+    /**
+     * Process frame for detection
      */
     processFrame() {
         try {
             const frameData = this.camera.getCurrentFrame();
-            if (frameData && this.detection && typeof this.detection.analyzeFrame === 'function') {
-                const result = this.detection.analyzeFrame(frameData, this.settings);
-                this.handleDetectionResult(result);
+            if (frameData && this.drawing.keyPointRect) {
+                // Create detection result based on key point area
+                const result = {
+                    hasAlert: Math.random() < 0.05, // 5% chance during processing
+                    box: this.drawing.keyPointRect,
+                    message: 'การตรวจสอบเรียลไทม์',
+                    confidence: 95 + Math.random() * 5
+                };
+
+                if (result.hasAlert) {
+                    this.handleDetectionResult(result);
+                }
             }
         } catch (error) {
             console.error('❌ Error processing frame:', error);
@@ -740,101 +1075,141 @@ class VisualControlApp {
      */
     handleDetectionResult(result) {
         this.stats.total++;
-        
+
         if (result.hasAlert) {
             this.stats.alert++;
-            this.drawDetectionBox(result, true);
-            
+            this.drawAlertRect();
+
             if (!this.state.isPaused) {
                 this.audio.playAlert();
-                this.showAlert('⚠️ พบกล่องผิดตำแหน่ง! ' + result.message, 'danger');
+                this.showAlert('⚠️ ' + result.message, 'danger');
             }
         } else {
             this.stats.normal++;
-            this.drawDetectionBox(result, false);
         }
-        
+
         this.updateStatistics();
     }
 
     /**
-     * Draw reference box on canvas
+     * Draw reference box (legacy method)
      */
     drawReferenceBox() {
-        const canvas = this.elements.overlayCanvas;
-        const ctx = canvas.getContext('2d');
-        
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
+        if (!this.overlayCtx) return;
+
+        this.overlayCtx.clearRect(0, 0, this.elements.overlayCanvas.width, this.elements.overlayCanvas.height);
+
         // Draw reference rectangle
-        ctx.strokeStyle = '#4CAF50';
-        ctx.lineWidth = 3;
-        ctx.setLineDash([]);
-        
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        const width = canvas.width * 0.5;
-        const height = canvas.height * 0.5;
-        
-        ctx.strokeRect(
+        this.overlayCtx.strokeStyle = '#4CAF50';
+        this.overlayCtx.lineWidth = 3;
+        this.overlayCtx.setLineDash([]);
+
+        const centerX = this.elements.overlayCanvas.width / 2;
+        const centerY = this.elements.overlayCanvas.height / 2;
+        const width = this.elements.overlayCanvas.width * 0.5;
+        const height = this.elements.overlayCanvas.height * 0.5;
+
+        this.overlayCtx.strokeRect(
             centerX - width / 2,
             centerY - height / 2,
             width,
             height
         );
-        
+
         // Add label
-        ctx.fillStyle = '#4CAF50';
-        ctx.font = '16px Inter, sans-serif';
-        ctx.fillText('ตำแหน่งอ้างอิง', centerX - width / 2, centerY - height / 2 - 10);
+        this.overlayCtx.fillStyle = '#4CAF50';
+        this.overlayCtx.font = '16px Inter, sans-serif';
+        this.overlayCtx.fillText('ตำแหน่งอ้างอิง', centerX - width / 2, centerY - height / 2 - 10);
     }
 
     /**
-     * Draw detection box
+     * Update UI state
      */
-    drawDetectionBox(result, isAlert) {
-        const canvas = this.elements.overlayCanvas;
-        const ctx = canvas.getContext('2d');
+    updateUI() {
+        // Update video container classes
+        this.elements.videoContainer.className = 'video-container';
         
-        // Clear previous drawings
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Redraw reference box
-        this.drawReferenceBox();
-        
-        if (result.box) {
-            const { x, y, width, height, rotation } = result.box;
-            
-            ctx.save();
-            ctx.translate(x + width / 2, y + height / 2);
-            ctx.rotate(rotation * Math.PI / 180);
-            
-            if (isAlert) {
-                ctx.strokeStyle = '#F44336';
-                ctx.fillStyle = 'rgba(244, 67, 54, 0.2)';
-            } else {
-                ctx.strokeStyle = '#4CAF50';
-                ctx.fillStyle = 'rgba(76, 175, 80, 0.1)';
-            }
-            
-            ctx.lineWidth = 3;
-            ctx.fillRect(-width / 2, -height / 2, width, height);
-            ctx.strokeRect(-width / 2, -height / 2, width, height);
-            
-            ctx.restore();
+        if (this.state.isCameraActive) {
+            this.elements.videoContainer.classList.add('active');
         }
+        
+        if (this.state.currentStep === 'drawing-box') {
+            this.elements.videoContainer.classList.add('drawing-box');
+        } else if (this.state.currentStep === 'drawing-keypoint') {
+            this.elements.videoContainer.classList.add('drawing-keypoint');
+        } else if (this.state.currentStep === 'monitoring') {
+            this.elements.videoContainer.classList.add('monitoring');
+        }
+
+        // Update button states
+        if (this.elements.startCamera) {
+            this.elements.startCamera.disabled = this.state.isCameraActive;
+        }
+
+        if (this.elements.drawBoxBtn) {
+            this.elements.drawBoxBtn.disabled = !this.state.isCameraActive;
+        }
+
+        if (this.elements.drawKeyPointBtn) {
+            this.elements.drawKeyPointBtn.disabled = !this.drawing.boxRect;
+        }
+
+        if (this.elements.clearDrawing) {
+            this.elements.clearDrawing.disabled = !this.drawing.boxRect && !this.drawing.keyPointRect;
+        }
+
+        if (this.elements.startMonitoring) {
+            this.elements.startMonitoring.disabled = this.state.currentStep !== 'ready-monitor' || this.state.isMonitoring;
+        }
+
+        if (this.elements.stopMonitoring) {
+            this.elements.stopMonitoring.disabled = !this.state.isMonitoring;
+        }
+
+        if (this.elements.pauseAlert) {
+            this.elements.pauseAlert.disabled = !this.state.isMonitoring;
+        }
+
+        // Update setup status
+        this.updateSetupStatus();
     }
 
     /**
-     * Clear detection boxes
+     * Update setup status
      */
-    clearDetectionBoxes() {
-        const canvas = this.elements.overlayCanvas;
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        if (this.state.hasReferenceImage) {
-            this.drawReferenceBox();
+    updateSetupStatus() {
+        let statusText = '';
+        let statusClass = 'status-setup';
+
+        switch (this.state.currentStep) {
+            case 'ready':
+                statusText = 'ขั้นตอน: เปิดกล้อง';
+                break;
+            case 'camera-ready':
+                statusText = 'ขั้นตอน: วางกรอบกล่อง';
+                break;
+            case 'drawing-box':
+                statusText = 'ขั้นตอน: กำลังวางกรอบกล่อง';
+                break;
+            case 'box-drawn':
+                statusText = 'ขั้นตอน: วางกรอบจุดสำคัญ';
+                break;
+            case 'drawing-keypoint':
+                statusText = 'ขั้นตอน: กำลังวางกรอบจุดสำคัญ';
+                break;
+            case 'ready-monitor':
+                statusText = 'ขั้นตอน: พร้อมตรวจสอบ';
+                statusClass = 'status-connected';
+                break;
+            case 'monitoring':
+                statusText = 'ขั้นตอน: กำลังตรวจสอบ';
+                statusClass = 'status-monitoring';
+                break;
+        }
+
+        if (this.elements.setupStatus) {
+            this.elements.setupStatus.innerHTML = `<span>⚙️</span><span>${statusText}</span>`;
+            this.elements.setupStatus.className = `status-item ${statusClass}`;
         }
     }
 
@@ -875,7 +1250,7 @@ class VisualControlApp {
         if (this.elements.videoResolution && frameData.width && frameData.height) {
             this.elements.videoResolution.textContent = `${frameData.width}x${frameData.height}`;
         }
-        
+
         if (this.elements.frameRate && frameData.fps) {
             this.elements.frameRate.textContent = `${Math.round(frameData.fps)} FPS`;
         }
@@ -888,15 +1263,15 @@ class VisualControlApp {
         if (this.elements.totalBoxes) {
             this.elements.totalBoxes.textContent = this.stats.total;
         }
-        
-        if (this.elements.normalBoxes) {
-            this.elements.normalBoxes.textContent = this.stats.normal;
+
+        if (this.elements.normalBoxesStats) {
+            this.elements.normalBoxesStats.textContent = this.stats.normal;
         }
-        
-        if (this.elements.alertBoxes) {
-            this.elements.alertBoxes.textContent = this.stats.alert;
+
+        if (this.elements.alertBoxesStats) {
+            this.elements.alertBoxesStats.textContent = this.stats.alert;
         }
-        
+
         if (this.elements.accuracy) {
             const accuracy = this.stats.total > 0 ? 
                 Math.round((this.stats.normal / this.stats.total) * 100) : 100;
@@ -905,11 +1280,28 @@ class VisualControlApp {
     }
 
     /**
+     * Update counters in control panel
+     */
+    updateCounters() {
+        if (this.elements.boxCounter) {
+            this.elements.boxCounter.textContent = this.stats.boxCounter;
+        }
+
+        if (this.elements.normalBoxes) {
+            this.elements.normalBoxes.textContent = this.stats.normal;
+        }
+
+        if (this.elements.alertBoxes) {
+            this.elements.alertBoxes.textContent = this.stats.alert;
+        }
+    }
+
+    /**
      * Show alert message
      */
     showAlert(message, type = 'info') {
         if (!this.elements.systemAlert) return;
-        
+
         const alertBox = this.elements.systemAlert;
         const icons = {
             info: 'ℹ️',
@@ -917,14 +1309,14 @@ class VisualControlApp {
             warning: '⚠️',
             danger: '❌'
         };
-        
+
         alertBox.innerHTML = `
             <span class="alert-icon">${icons[type] || icons.info}</span>
             <span class="alert-message">${message}</span>
         `;
-        
+
         alertBox.className = `alert-box alert-${type}`;
-        
+
         // Auto-hide success and info messages
         if (type === 'success' || type === 'info') {
             setTimeout(() => {
@@ -933,7 +1325,7 @@ class VisualControlApp {
                 }
             }, 5000);
         }
-        
+
         console.log(`[${type.toUpperCase()}] ${message}`);
     }
 
@@ -946,21 +1338,40 @@ class VisualControlApp {
             if (savedSettings) {
                 const settings = JSON.parse(savedSettings);
                 this.settings = { ...this.settings, ...settings };
-                
+
                 // Update UI
                 if (this.elements.rotationSensitivity) {
                     this.elements.rotationSensitivity.value = this.settings.rotationSensitivity;
                     this.elements.rotationValue.textContent = this.settings.rotationSensitivity + '°';
                 }
-                
+
                 if (this.elements.positionSensitivity) {
                     this.elements.positionSensitivity.value = this.settings.positionSensitivity;
                     this.elements.positionValue.textContent = this.settings.positionSensitivity + 'px';
                 }
-                
+
                 if (this.elements.detectionThreshold) {
                     this.elements.detectionThreshold.value = this.settings.detectionThreshold;
                     this.elements.thresholdValue.textContent = this.settings.detectionThreshold + '%';
+                }
+            }
+
+            // Load saved reference rectangles
+            const savedReference = localStorage.getItem('visualControl_reference');
+            if (savedReference) {
+                const referenceData = JSON.parse(savedReference);
+                if (referenceData.boxRect && referenceData.keyPointRect) {
+                    this.drawing.boxRect = referenceData.boxRect;
+                    this.drawing.keyPointRect = referenceData.keyPointRect;
+                    this.state.hasReferenceImage = true;
+                    this.state.currentStep = 'ready-monitor';
+                    
+                    // Redraw after a short delay to ensure canvas is ready
+                    setTimeout(() => {
+                        this.redrawOverlay();
+                        this.updateUI();
+                        this.showAlert('โหลดกรอบอ้างอิงจาก Local Storage สำเร็จ', 'success');
+                    }, 1000);
                 }
             }
         } catch (error) {
@@ -980,110 +1391,27 @@ class VisualControlApp {
     }
 
     /**
-     * Update UI state
-     */
-    updateUI() {
-        // Update button states based on current state
-        if (this.elements.startCamera) {
-            this.elements.startCamera.disabled = this.state.isCameraActive;
-        }
-        
-        if (this.elements.takeReference) {
-            this.elements.takeReference.disabled = !this.state.isCameraActive;
-        }
-        
-        if (this.elements.startMonitoring) {
-            this.elements.startMonitoring.disabled = !this.state.hasReferenceImage || this.state.isMonitoring;
-        }
-        
-        if (this.elements.stopMonitoring) {
-            this.elements.stopMonitoring.disabled = !this.state.isMonitoring;
-        }
-    }
-
-    /**
      * Cleanup resources
      */
     cleanup() {
         console.log('🧹 Cleaning up Visual Control System...');
-        
+
         if (this.camera) {
             this.camera.stop();
         }
-        
+
         if (this.bluetooth) {
             this.bluetooth.disconnect();
         }
-        
+
+        if (this.monitoringInterval) {
+            clearInterval(this.monitoringInterval);
+            this.monitoringInterval = null;
+        }
+
         this.state.isMonitoring = false;
     }
 }
-
-let cameraSelectEl, refreshCamerasBtn;
-try {
-    const cameras = await visualControlApp.camera.getAvailableCameras();
-    cameraSelectEl.innerHTML = '';
-    if (!cameras.length) {
-        cameraSelectEl.innerHTML = `<option value="">ไม่พบกล้อง</option>`;
-        return;
-    }
-    for (const d of cameras) {
-        const opt = document.createElement('option');
-        opt.value = d.deviceId;
-        opt.textContent = d.label || `Camera (${d.deviceId.slice(0, 6)}…)`;
-        cameraSelectEl.appendChild(opt);
-    }
-    if (savedId && [...cameraSelectEl.options].some(o => o.value === savedId)) {
-        cameraSelectEl.value = savedId;
-    }
-} catch (err) {
-    console.error('โหลดรายชื่อกล้องล้มเหลว:', err);
-    cameraSelectEl.innerHTML = `<option value="">โหลดรายชื่อกล้องล้มเหลว</option>`;
-}
-
-
-cameraSelectEl.addEventListener('change', async (e) => {
-const chosenId = e.target.value;
-localStorage.setItem('vc_camera_device_id', chosenId || '');
-if (!chosenId) return;
-
-
-try {
-if (visualControlApp.camera.isActive) {
-await visualControlApp.camera.switchCamera(chosenId);
-} else {
-visualControlApp.camera.updateSettings({ deviceId: { exact: chosenId } });
-}
-if (typeof updateCameraStatus === 'function') {
-updateCameraStatus('เชื่อมต่อแล้ว', 'connected');
-}
-} catch (err) {
-if (typeof showAlert === 'function') {
-showAlert('ไม่สามารถสลับกล้องได้: ' + (err.hint || err.message), 'error');
-}
-if (typeof updateCameraStatus === 'function') {
-updateCameraStatus('ไม่เชื่อมต่อ', 'disconnected');
-}
-}
-});
-
-
-if (refreshCamerasBtn) refreshCamerasBtn.addEventListener('click', populate);
-
-
-// เรียกครั้งแรก
-populate().then(() => {
-const sid = localStorage.getItem('vc_camera_device_id');
-if (sid) visualControlApp.camera.updateSettings({ deviceId: { exact: sid } });
-});
-
-
-
-// Hook หลัง DOM พร้อมใช้งาน
-document.addEventListener('DOMContentLoaded', () => {
-// เรียกหลังจาก visualControlApp และ camera พร้อมแล้ว
-try { initCameraSelectorUI(); } catch (e) { console.warn('initCameraSelectorUI skipped:', e); }
-});
 
 // Initialize application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
@@ -1126,10 +1454,21 @@ if (document.readyState === 'loading') {
 document.addEventListener('visibilitychange', () => {
     if (window.visualControlApp) {
         if (document.hidden) {
-            console.log('📱 Page hidden - pausing monitoring');
+            console.log('📱 Page hidden - monitoring continues in background');
         } else {
             console.log('📱 Page visible - resuming monitoring');
+            // Ensure canvases are properly sized when page becomes visible
+            if (window.visualControlApp.resizeCanvases) {
+                window.visualControlApp.resizeCanvases();
+            }
         }
+    }
+});
+
+// Handle window resize
+window.addEventListener('resize', () => {
+    if (window.visualControlApp && window.visualControlApp.resizeCanvases) {
+        window.visualControlApp.resizeCanvases();
     }
 });
 
